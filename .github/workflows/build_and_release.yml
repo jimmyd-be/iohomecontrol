@@ -19,6 +19,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup PlatformIO
+        uses: n-vr/setup-platformio-action@v1
+      
+      - name: Build PlatformIO project
+        run: pio run
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -68,9 +74,6 @@ jobs:
             with open(ghout,'a') as g: g.write(f"default_envs={','.join(default_envs)}\n")
             with open(ghout,'a') as g: g.write(f"app_version={app_version}\n")
           PY
-
-      - name: Setup PlatformIO
-        uses: platformio/action-setup@v2
 
       - name: Build all defined envs
         env:
