@@ -23,7 +23,7 @@ jobs:
         uses: n-vr/setup-platformio-action@v1
       
       - name: Build PlatformIO project
-        run: pio run
+        run: pio build
 
       - name: Set up Python
         uses: actions/setup-python@v4
