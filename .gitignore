@@ -1,5 +1,6 @@
 /.pio/
 /.idea/
+/data/
 /docs/
 compile_commands.json
 git_rev_macro.py
