@@ -1,0 +1,141 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'release/*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Parse platformio.ini (env list + APP_VERSION)
+        id: parse
+        run: |
+          python - <<'PY'
+          import configparser, re
+          p = configparser.ConfigParser()
+          p.read('platformio.ini')
+          envs = []
+          for s in p.sections():
+            if s.startswith('env:'):
+              envs.append(s.split(':',1)[1])
+
+          default_envs = []
+          if p.has_section('platformio'):
+            val = p.get('platformio','default_envs',fallback='').strip()
+            if val:
+              default_envs = [x.strip() for x in val.split(',') if x.strip()]
+
+          app_version = '0.0.0'
+          if p.has_section('common'):
+            bf = p.get('common','build_flags',fallback='')
+            m = re.search(r'-D\s*APP_VERSION=\\?"?([^"\s]+)\\?"?', bf)
+            if m:
+              app_version = m.group(1)
+
+          # write outputs
+          print('envs=' + ','.join(envs))
+          print('default_envs=' + ','.join(default_envs))
+          print('app_version=' + app_version)
+          with open('envs.txt','w') as f: f.write(','.join(envs))
+          with open('default_envs.txt','w') as f: f.write(','.join(default_envs))
+          with open('app_version.txt','w') as f: f.write(app_version)
+          # set GitHub Action outputs
+          print(f"envs={','.join(envs)}")
+          print(f"default_envs={','.join(default_envs)}")
+          print(f"app_version={app_version}")
+          # also export to GITHUB_OUTPUT for newer GH runners
+          import os
+          ghout = os.environ.get('GITHUB_OUTPUT')
+          if ghout:
+            with open(ghout,'a') as g: g.write(f"envs={','.join(envs)}\n")
+            with open(ghout,'a') as g: g.write(f"default_envs={','.join(default_envs)}\n")
+            with open(ghout,'a') as g: g.write(f"app_version={app_version}\n")
+          PY
+
+      - name: Setup PlatformIO
+        uses: platformio/action-setup@v2
+
+      - name: Build all defined envs
+        env:
+          ENVS: ${{ steps.parse.outputs.envs }}
+          DEFAULT_ENVS: ${{ steps.parse.outputs.default_envs }}
+        run: |
+          set -euo pipefail
+          ENVS_RAW="${ENVS:-}"
+          if [ -z "$ENVS_RAW" ]; then
+            ENVS_RAW="${DEFAULT_ENVS:-}"
+          fi
+          if [ -z "$ENVS_RAW" ]; then
+            echo "No environments found in platformio.ini" >&2
+            exit 1
+          fi
+          IFS=',' read -ra LIST <<< "$ENVS_RAW"
+          for e in "${LIST[@]}"; do
+            e_trimmed=$(echo "$e" | xargs)
+            if [ -z "$e_trimmed" ]; then continue; fi
+            echo "Building env: $e_trimmed"
+            pio run -e "$e_trimmed"
+          done
+
+      - name: Collect binaries
+        run: |
+          mkdir -p release_artifacts
+          shopt -s globstar nullglob
+          for f in .pio/build/**/*.bin; do
+            echo "Found: $f"
+            cp "$f" release_artifacts/$(basename "$f")
+          done
+          ls -la release_artifacts
+
+      - name: Create md5 files for artifacts
+        run: |
+          cd release_artifacts
+          for f in *.bin; do
+            [ -f "$f" ] || continue
+            md5sum "$f" | awk '{print $1}' > "$f".md5
+          done
+          ls -la
+
+      - name: Create GitHub Release (generate release notes)
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ steps.parse.outputs.app_version }}
+          release_name: Release v${{ steps.parse.outputs.app_version }}
+          generate_release_notes: true
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          upload_url="$UPLOAD_URL"
+          # strip template part like {"?name,label"}
+          upload_url=${upload_url%%\{*}
+          echo "Upload URL: $upload_url"
+          for f in release_artifacts/*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "Uploading $name"
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" "${upload_url}?name=${name}"
+          done
