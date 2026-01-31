@@ -3,8 +3,9 @@ name: Build and Release
 on:
   workflow_dispatch:
   push:
+    # run on every branch
     branches:
-      - main
+      - '**'
     tags:
       - 'release/*'
 
@@ -112,12 +113,33 @@ jobs:
           done
           ls -la
 
+      - name: Compute release tag
+        id: compute_tag
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(cat app_version.txt || echo "0.0.0")
+          # derive branch name from GITHUB_REF
+          REF=${GITHUB_REF:-}
+          BRANCH=${REF#refs/heads/}
+          if [ -z "$BRANCH" ]; then
+            BRANCH=""
+          fi
+          if [ "$BRANCH" != "main" ] && [ -n "$BRANCH" ]; then
+            TAG="v${APP_VERSION}-snapshot-${BRANCH}"
+            NAME="Release ${APP_VERSION} (snapshot ${BRANCH})"
+          else
+            TAG="v${APP_VERSION}"
+            NAME="Release v${APP_VERSION}"
+          fi
+          echo "release_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "release_name=$NAME" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release (generate release notes)
         id: create_release
         uses: actions/create-release@v1
         with:
-          tag_name: v${{ steps.parse.outputs.app_version }}
-          release_name: Release v${{ steps.parse.outputs.app_version }}
+          tag_name: ${{ steps.compute_tag.outputs.release_tag }}
+          release_name: ${{ steps.compute_tag.outputs.release_name }}
           generate_release_notes: true
 
       - name: Upload release assets
