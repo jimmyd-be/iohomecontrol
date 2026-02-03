@@ -35,45 +35,48 @@ jobs:
         id: parse
         run: |
           python - <<'PY'
-          import configparser, re
+          import configparser, re, os
           p = configparser.ConfigParser()
           p.read('platformio.ini')
-          envs = []
-          for s in p.sections():
-            if s.startswith('env:'):
-              envs.append(s.split(':',1)[1])
 
+          # collect envs defined as [env:NAME]
+          envs = [s.split(':',1)[1] for s in p.sections() if s.startswith('env:')]
+
+          # default_envs from [platformio] section (comma separated)
           default_envs = []
           if p.has_section('platformio'):
             val = p.get('platformio','default_envs',fallback='').strip()
             if val:
               default_envs = [x.strip() for x in val.split(',') if x.strip()]
 
+          # Try to extract APP_VERSION from common.build_flags
           app_version = '0.0.0'
           if p.has_section('common'):
             bf = p.get('common','build_flags',fallback='')
-            m = re.search(r'-D\s*APP_VERSION=\\?"?([^"\s]+)\\?"?', bf)
+            # Search for -D APP_VERSION in various quoting styles
+            m = re.search(r'-D\s*APP_VERSION\s*=\s*"([^"]+)"', bf)
+            if not m:
+              m = re.search(r"-D\s*APP_VERSION\s*=\s*'([^']+)'", bf)
+            if not m:
+              m = re.search(r'-D\s*APP_VERSION\s*=\s*([^\s\n]+)', bf)
             if m:
-              app_version = m.group(1)
+              app_version = m.group(1).strip('"\'')
 
-          # write outputs
-          print('envs=' + ','.join(envs))
-          print('default_envs=' + ','.join(default_envs))
-          print('app_version=' + app_version)
+          # write outputs and files for later steps
           with open('envs.txt','w') as f: f.write(','.join(envs))
           with open('default_envs.txt','w') as f: f.write(','.join(default_envs))
           with open('app_version.txt','w') as f: f.write(app_version)
-          # set GitHub Action outputs
+
+          # export outputs for GitHub Actions
           print(f"envs={','.join(envs)}")
           print(f"default_envs={','.join(default_envs)}")
           print(f"app_version={app_version}")
-          # also export to GITHUB_OUTPUT for newer GH runners
-          import os
           ghout = os.environ.get('GITHUB_OUTPUT')
           if ghout:
-            with open(ghout,'a') as g: g.write(f"envs={','.join(envs)}\n")
-            with open(ghout,'a') as g: g.write(f"default_envs={','.join(default_envs)}\n")
-            with open(ghout,'a') as g: g.write(f"app_version={app_version}\n")
+            with open(ghout,'a') as g:
+              g.write(f"envs={','.join(envs)}\n")
+              g.write(f"default_envs={','.join(default_envs)}\n")
+              g.write(f"app_version={app_version}\n")
           PY
 
       - name: "✏️ Generate release changelog"
@@ -84,8 +87,8 @@ jobs:
 
       - name: Release
         uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
         with:
+          name: Release ${{ steps.parse.outputs.app_version }}
           body_path: build/release/changelog.md
           prerelease: github.ref != 'refs/heads/main'
           files: |
@@ -93,3 +96,9 @@ jobs:
             build/release/iohomecontrol_HeltecLoraV2ESP32_*.md5
             build/release/iohomecontrol_LilyGoLoraESP32_*.bin
             build/release/iohomecontrol_LilyGoLoraESP32_*.md5
+
+      -name: Upload artifacts
+       uses: actions/upload-artifact@v6
+       with:
+         name: build-artifacts
+         path: build/release/
