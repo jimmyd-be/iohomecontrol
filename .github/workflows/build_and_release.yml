@@ -27,8 +27,8 @@ jobs:
         with:
           python-version: '3.14'
       
-      - name: Build PlatformIO project
-        run: pio run
+      - name: Build PlatformIO project for HeltecLoraV2ESP32
+        run: pio run -e HeltecLoraV2ESP32
 
 
       - name: Parse platformio.ini (env list + APP_VERSION)
