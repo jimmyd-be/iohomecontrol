@@ -27,12 +27,9 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Build PlatformIO project for LilyGoLoraESP32
-        run: pio run -e LilyGoLoraESP32
-      
-      - name: Build PlatformIO project for HeltecLoraV2ESP32
-        run: pio run -e HeltecLoraV2ESP32
-
+      - name: Build PlatformIO project
+        run: pio run 
+    
 
       - name: Parse platformio.ini (env list + APP_VERSION)
         id: parse
@@ -79,92 +76,19 @@ jobs:
             with open(ghout,'a') as g: g.write(f"app_version={app_version}\n")
           PY
 
-      - name: Build all defined envs
-        env:
-          ENVS: ${{ steps.parse.outputs.envs }}
-          DEFAULT_ENVS: ${{ steps.parse.outputs.default_envs }}
-        run: |
-          set -euo pipefail
-          ENVS_RAW="${ENVS:-}"
-          if [ -z "$ENVS_RAW" ]; then
-            ENVS_RAW="${DEFAULT_ENVS:-}"
-          fi
-          if [ -z "$ENVS_RAW" ]; then
-            echo "No environments found in platformio.ini" >&2
-            exit 1
-          fi
-          IFS=',' read -ra LIST <<< "$ENVS_RAW"
-          for e in "${LIST[@]}"; do
-            e_trimmed=$(echo "$e" | xargs)
-            if [ -z "$e_trimmed" ]; then continue; fi
-            echo "Building env: $e_trimmed"
-            pio run -e "$e_trimmed"
-          done
-
-      - name: Collect binaries
-        run: |
-          mkdir -p release_artifacts
-          shopt -s globstar nullglob
-          for f in .pio/build/**/*.bin; do
-            echo "Found: $f"
-            cp "$f" release_artifacts/$(basename "$f")
-          done
-          ls -la release_artifacts
-
-      - name: Create md5 files for artifacts
-        run: |
-          cd release_artifacts
-          for f in *.bin; do
-            [ -f "$f" ] || continue
-            md5sum "$f" | awk '{print $1}' > "$f".md5
-          done
-          ls -la
-
-      - name: Compute release tag
-        id: compute_tag
-        run: |
-          set -euo pipefail
-          APP_VERSION=$(cat app_version.txt || echo "0.0.0")
-          # derive branch name from GITHUB_REF
-          REF=${GITHUB_REF:-}
-          BRANCH=${REF#refs/heads/}
-          if [ -z "$BRANCH" ]; then
-            BRANCH=""
-          fi
-          if [ "$BRANCH" != "main" ] && [ -n "$BRANCH" ]; then
-            TAG="v${APP_VERSION}-snapshot-${BRANCH}"
-            NAME="Release ${APP_VERSION} (snapshot ${BRANCH})"
-          else
-            TAG="v${APP_VERSION}"
-            NAME="Release v${APP_VERSION}"
-          fi
-          echo "release_tag=$TAG" >> $GITHUB_OUTPUT
-          echo "release_name=$NAME" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release (generate release notes)
-        id: create_release
-        uses: actions/create-release@v1
+      - name: "✏️ Generate release changelog"
+        uses: janheinrichmerker/action-github-changelog-generator@v2.3
         with:
-          tag_name: ${{ steps.compute_tag.outputs.release_tag }}
-          release_name: ${{ steps.compute_tag.outputs.release_name }}
-          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }} 
+          output: build/release/changelog.md
 
-      - name: Upload release assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
-        run: |
-          set -euo pipefail
-          upload_url="$UPLOAD_URL"
-          # strip template part like {"?name,label"}
-          upload_url=${upload_url%%\{*}
-          echo "Upload URL: $upload_url"
-          for f in release_artifacts/*; do
-            [ -f "$f" ] || continue
-            name=$(basename "$f")
-            echo "Uploading $name"
-            curl -s -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f" "${upload_url}?name=${name}"
-          done
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: build/release/changelog.md
+          prerelease: github.ref != 'refs/heads/main'
+          files: |
+            build/release/iohomecontrol_HeltecLoraV2ESP32_*.bin
+            build/release/iohomecontrol_HeltecLoraV2ESP32_*.md5
+            build/release/iohomecontrol_LilyGoLoraESP32_*.bin
+            build/release/iohomecontrol_LilyGoLoraESP32_*.md5
