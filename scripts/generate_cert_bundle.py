@@ -36,7 +36,18 @@ try:
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import serialization
 except ImportError:
-    env.Execute("$PYTHONEXE -m pip install cryptography")
+    # Try to install the dependency in CI/runners and then import again.
+    try:
+        env.Execute("$PYTHONEXE -m pip install cryptography")
+    except Exception:
+        sys.stderr.write('SSL Cert Store: Failed to install cryptography package\n')
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import serialization
+    except ImportError as e:
+        sys.stderr.write(f'SSL Cert Store: cryptography module is required but could not be imported: {e}\n')
+        raise
 
 
 ca_bundle_bin_file = 'x509_crt_bundle.bin'
