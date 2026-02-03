@@ -26,6 +26,9 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.14'
+
+      - name: Build PlatformIO project for LilyGoLoraESP32
+        run: pio run -e LilyGoLoraESP32
       
       - name: Build PlatformIO project for HeltecLoraV2ESP32
         run: pio run -e HeltecLoraV2ESP32
